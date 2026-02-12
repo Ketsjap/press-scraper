@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Media Press Feed Generator - Test Mode
-Scrapes articles and fully scrapes first article as test
+Media Press Feed Generator - Full Production Version
+Scrapes all articles with complete content
 """
 
 import json
@@ -9,63 +9,75 @@ import sys
 from datetime import datetime
 from scrapers import VTMScraper
 
-def print_test_results(items):
-    """Print gedetailleerde test resultaten"""
+def print_statistics(items):
+    """Print gedetailleerde statistieken"""
     if not items:
         print("❌ No items scraped")
         return
     
     print("\n" + "="*70)
-    print("📊 SCRAPING RESULTS")
+    print("📊 SCRAPING STATISTICS")
     print("="*70)
     
-    print(f"\nTotal articles found: {len(items)}")
+    total = len(items)
+    with_content = sum(1 for item in items if 'content' in item)
+    with_images = sum(1 for item in items if 'content' in item and 'image_url' in item['content'])
+    with_programs = sum(1 for item in items if 'content' in item and 'detected_programs' in item['content'])
     
-    # Check eerste item voor volledige content
-    first_item = items[0]
-    has_content = 'content' in first_item
+    print(f"\n📈 Overall:")
+    print(f"   Total articles: {total}")
+    print(f"   With full content: {with_content} ({100*with_content//total}%)")
+    print(f"   With images: {with_images} ({100*with_images//total if total else 0}%)")
+    print(f"   With detected programs: {with_programs} ({100*with_programs//total if total else 0}%)")
     
-    print(f"\n{'✅' if has_content else '❌'} First article has full content: {has_content}")
+    # Collect all detected programs
+    all_programs = []
+    for item in items:
+        if 'content' in item and 'detected_programs' in item['content']:
+            all_programs.extend(item['content']['detected_programs'])
     
-    if has_content:
-        content = first_item['content']
-        print(f"\n📄 FIRST ARTICLE DETAILS:")
-        print(f"   Title: {first_item['title'][:60]}...")
-        print(f"   URL: {first_item['url']}")
-        
-        if 'published_date' in content:
-            print(f"   Published: {content['published_date']}")
-        
-        if 'paragraphs' in content:
-            print(f"   Paragraphs: {len(content['paragraphs'])}")
-            print(f"   First paragraph: {content['paragraphs'][0][:100]}...")
-        
-        if 'image_url' in content:
-            print(f"   Image: {content['image_url'][:60]}...")
-        
-        if 'meta_description' in content:
-            print(f"   Meta desc: {content['meta_description'][:80]}...")
-        
-        if 'detected_programs' in content:
-            print(f"   Detected TV programs: {', '.join(content['detected_programs'])}")
-        
-        if 'tags' in content:
-            print(f"   Tags: {', '.join(content['tags'])}")
-        
-        print(f"\n   Available fields: {', '.join(content.keys())}")
+    if all_programs:
+        from collections import Counter
+        program_counts = Counter(all_programs)
+        print(f"\n📺 Detected TV Programs:")
+        for prog, count in program_counts.most_common(10):
+            print(f"   {prog}: {count} article(s)")
     
-    print(f"\n📋 OTHER ARTICLES (without full content):")
-    for i, item in enumerate(items[1:6], 2):  # Show next 5
-        print(f"   {i}. {item['title'][:60]}...")
+    # Average content length
+    text_lengths = [
+        len(item['content'].get('full_text', '')) 
+        for item in items 
+        if 'content' in item and 'full_text' in item['content']
+    ]
     
-    if len(items) > 6:
-        print(f"   ... and {len(items) - 6} more")
+    if text_lengths:
+        avg_length = sum(text_lengths) // len(text_lengths)
+        print(f"\n📝 Content Stats:")
+        print(f"   Average article length: {avg_length} characters")
+        print(f"   Shortest: {min(text_lengths)} chars")
+        print(f"   Longest: {max(text_lengths)} chars")
+    
+    # Sample articles
+    print(f"\n📄 Sample Articles (first 3 with content):")
+    count = 0
+    for item in items:
+        if 'content' in item and count < 3:
+            count += 1
+            content = item['content']
+            print(f"\n   {count}. {item['title'][:60]}...")
+            print(f"      URL: {item['url'][:50]}...")
+            if 'published_date' in content:
+                print(f"      Date: {content['published_date']}")
+            if 'detected_programs' in content:
+                print(f"      Programs: {', '.join(content['detected_programs'])}")
+            if 'paragraphs' in content:
+                print(f"      Paragraphs: {len(content['paragraphs'])}")
     
     print("\n" + "="*70)
 
 def main():
     """Main scraper orchestrator"""
-    print(f"=== Media Press Scraper (TEST MODE) ===")
+    print(f"=== Media Press Scraper (FULL VERSION) ===")
     print(f"Started at {datetime.now().isoformat()}\n")
     
     all_items = []
@@ -81,11 +93,19 @@ def main():
         traceback.print_exc()
         return 1
     
-    # Sort by scraped_at
+    # Future: VRT Scraper
+    # try:
+    #     vrt = VRTScraper()
+    #     vrt_items = vrt.scrape_articles()
+    #     all_items.extend(vrt_items)
+    # except Exception as e:
+    #     print(f"[ERROR] VRT scraper failed: {e}", file=sys.stderr)
+    
+    # Sort by scraped_at (newest first)
     all_items.sort(key=lambda x: x['scraped_at'], reverse=True)
     
-    # Print test results
-    print_test_results(all_items)
+    # Print statistics
+    print_statistics(all_items)
     
     # Write to feed.json
     output_file = 'feed.json'
@@ -94,13 +114,19 @@ def main():
     
     print(f"\n💾 Output written to: {output_file}")
     
+    # Calculate file size
+    import os
+    file_size = os.path.getsize(output_file)
+    file_size_kb = file_size / 1024
+    print(f"📦 File size: {file_size_kb:.1f} KB")
+    
     if all_items:
-        print(f"✅ Success! {len(all_items)} items scraped")
-        if 'content' in all_items[0]:
-            print(f"✅ First article has full content")
+        with_content = sum(1 for item in all_items if 'content' in item)
+        print(f"\n✅ Success! {len(all_items)} articles scraped")
+        print(f"✅ {with_content} articles with full content")
         return 0
     else:
-        print("❌ ERROR: No items scraped!")
+        print("\n❌ ERROR: No items scraped!")
         return 1
 
 if __name__ == '__main__':
