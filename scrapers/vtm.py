@@ -1,6 +1,6 @@
 """
-VTM Press Scraper - Test version with full article scraping
-Scrapes https://communicatie.vtm.be
+VTM Press Scraper - Full version
+Scrapes ALL articles from https://communicatie.vtm.be with complete content
 """
 from .base import BaseScraper
 import time
@@ -10,6 +10,7 @@ class VTMScraper(BaseScraper):
     
     def __init__(self):
         super().__init__('vtm')
+        self.scrape_delay = 1.0  # Seconden tussen requests (respecteer de server)
     
     def get_base_url(self):
         return "https://communicatie.vtm.be"
@@ -19,8 +20,6 @@ class VTMScraper(BaseScraper):
         Scrape volledige artikel content van een specifieke URL
         Returns dict met gedetailleerde info
         """
-        print(f"[VTM] Scraping article details: {url}")
-        
         soup = self.fetch_page(url)
         if not soup:
             return None
@@ -34,7 +33,6 @@ class VTMScraper(BaseScraper):
         for selector in ['article', '.article-content', '.content', 'main', '.post-content']:
             article_content = soup.select_one(selector)
             if article_content:
-                print(f"[VTM] Found article content with selector: {selector}")
                 break
         
         if article_content:
@@ -49,7 +47,6 @@ class VTMScraper(BaseScraper):
                 details['paragraphs'] = paragraphs
                 details['full_text'] = ' '.join(paragraphs)
                 details['summary'] = paragraphs[0] if paragraphs else None
-                print(f"[VTM] Extracted {len(paragraphs)} paragraphs")
         
         # 2. Publicatiedatum - meerdere plekken proberen
         date_found = None
@@ -58,14 +55,12 @@ class VTMScraper(BaseScraper):
         time_elem = soup.find('time')
         if time_elem:
             date_found = time_elem.get('datetime') or time_elem.get_text(strip=True)
-            print(f"[VTM] Found date in <time>: {date_found}")
         
         # Probeer meta tag
         if not date_found:
             meta_date = soup.find('meta', property='article:published_time')
             if meta_date:
                 date_found = meta_date.get('content')
-                print(f"[VTM] Found date in meta: {date_found}")
         
         # Probeer class met 'date' of 'published'
         if not date_found:
@@ -74,7 +69,6 @@ class VTMScraper(BaseScraper):
             ))
             if date_elem:
                 date_found = date_elem.get_text(strip=True)
-                print(f"[VTM] Found date in element: {date_found}")
         
         if date_found:
             details['published_date'] = date_found
@@ -103,7 +97,6 @@ class VTMScraper(BaseScraper):
         
         if img_found:
             details['image_url'] = self.make_absolute_url(img_found)
-            print(f"[VTM] Found image: {img_found[:50]}...")
         
         # 4. Meta description (vaak goede samenvatting)
         meta_desc = soup.find('meta', attrs={'name': 'description'})
@@ -112,7 +105,6 @@ class VTMScraper(BaseScraper):
         
         if meta_desc:
             details['meta_description'] = meta_desc.get('content')
-            print(f"[VTM] Found meta description: {details['meta_description'][:60]}...")
         
         # 5. Categorie/Tags
         tags = []
@@ -123,19 +115,20 @@ class VTMScraper(BaseScraper):
         
         if tags:
             details['tags'] = tags
-            print(f"[VTM] Found tags: {', '.join(tags)}")
         
-        # 6. Probeer TV-programma naam te vinden (vaak in titel of eerste paragraph)
-        # Dit wordt later verfijnd met AI, maar we kunnen al proberen
-        program_keywords = ['the voice', 'thuis', 'familie', 'vtm nieuws', 'telefacts', 
-                           'love island', 'bestemming x', 'got talent']
+        # 6. Auto-detectie van TV-programma namen
+        program_keywords = [
+            'the voice', 'thuis', 'familie', 'vtm nieuws', 'het nieuws',
+            'telefacts', 'love island', 'bestemming x', 'got talent',
+            'de box', 'winter vol liefde', 'een echte job', 'florentina',
+            'moordzaken', 'so you think you can dance', 'de mol'
+        ]
         
         full_text_lower = details.get('full_text', '').lower()
         detected_programs = [kw for kw in program_keywords if kw in full_text_lower]
         
         if detected_programs:
             details['detected_programs'] = detected_programs
-            print(f"[VTM] Detected programs: {', '.join(detected_programs)}")
         
         return details
     
@@ -169,7 +162,7 @@ class VTMScraper(BaseScraper):
             print("[VTM] ERROR: No article links found!")
             return []
         
-        # Process alle links
+        # Process alle links - maak eerst basis items
         for link in article_links:
             url = link.get('href', '')
             
@@ -230,31 +223,43 @@ class VTMScraper(BaseScraper):
                 extra_data=extra
             ))
         
-        print(f"[VTM] Successfully scraped {len(items)} article links")
+        print(f"[VTM] Found {len(items)} article links")
         
-        # 🔥 NIEUW: Scrape het EERSTE artikel volledig als test
-        if items:
-            print(f"\n[VTM] === TEST: Scraping first article in full ===")
-            first_item = items[0]
+        # 🔥 NIEUW: Scrape ALLE artikelen volledig
+        print(f"\n[VTM] === Scraping full content for all {len(items)} articles ===")
+        
+        scraped_count = 0
+        failed_count = 0
+        
+        for i, item in enumerate(items, 1):
+            print(f"[VTM] [{i}/{len(items)}] Scraping: {item['title'][:50]}...")
             
-            # Wacht even (respecteer de website)
-            time.sleep(1)
+            # Wacht tussen requests (respecteer de server)
+            if i > 1:
+                time.sleep(self.scrape_delay)
             
-            # Haal volledige content op
-            article_details = self.scrape_article_content(first_item['url'])
-            
-            if article_details:
-                # Voeg details toe aan eerste item
-                first_item['content'] = article_details
-                print(f"[VTM] ✅ Successfully added full content to first article")
-                print(f"[VTM] Content keys: {list(article_details.keys())}")
+            try:
+                article_details = self.scrape_article_content(item['url'])
                 
-                # Show preview
-                if 'summary' in article_details:
-                    print(f"[VTM] Summary preview: {article_details['summary'][:100]}...")
-            else:
-                print(f"[VTM] ❌ Failed to scrape article content")
-            
-            print(f"[VTM] === END TEST ===\n")
+                if article_details:
+                    item['content'] = article_details
+                    scraped_count += 1
+                    
+                    # Short preview
+                    if 'summary' in article_details:
+                        print(f"[VTM]    ✅ {article_details['summary'][:60]}...")
+                    else:
+                        print(f"[VTM]    ✅ Content scraped")
+                else:
+                    failed_count += 1
+                    print(f"[VTM]    ⚠️  No content found")
+                    
+            except Exception as e:
+                failed_count += 1
+                print(f"[VTM]    ❌ Error: {e}")
+        
+        print(f"\n[VTM] === Scraping complete ===")
+        print(f"[VTM] ✅ Success: {scraped_count}/{len(items)} articles")
+        print(f"[VTM] ❌ Failed: {failed_count}/{len(items)} articles")
         
         return items
