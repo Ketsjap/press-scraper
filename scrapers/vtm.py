@@ -1,6 +1,6 @@
 """
-VTM Press Scraper - Full version
-Scrapes ALL articles from https://communicatie.vtm.be with complete content
+VTM Press Scraper - Full version with basic filtering
+Scrapes ALL articles but filters obvious non-program content
 """
 from .base import BaseScraper
 import time
@@ -10,10 +10,33 @@ class VTMScraper(BaseScraper):
     
     def __init__(self):
         super().__init__('vtm')
-        self.scrape_delay = 1.0  # Seconden tussen requests (respecteer de server)
+        self.scrape_delay = 1.0  # Seconden tussen requests
+        
+        # Hard filters - duidelijk niet-programma content
+        self.skip_keywords = [
+            'privacybeleid', 'privacy policy', 'privacy-policy',
+            'algemene voorwaarden', 'cookiebeleid', 'disclaimer',
+            'over ons', 'about us', 'contact', 'vacature',
+            'cookie policy', 'terms and conditions'
+        ]
     
     def get_base_url(self):
         return "https://communicatie.vtm.be"
+    
+    def should_skip_article(self, title, url):
+        """
+        Check of artikel geskipt moet worden (hard filters)
+        Returns True als artikel NIET relevant is voor TV-programma's
+        """
+        title_lower = title.lower()
+        url_lower = url.lower()
+        
+        # Check tegen skip keywords
+        for keyword in self.skip_keywords:
+            if keyword in title_lower or keyword in url_lower:
+                return True
+        
+        return False
     
     def scrape_article_content(self, url):
         """
@@ -121,7 +144,8 @@ class VTMScraper(BaseScraper):
             'the voice', 'thuis', 'familie', 'vtm nieuws', 'het nieuws',
             'telefacts', 'love island', 'bestemming x', 'got talent',
             'de box', 'winter vol liefde', 'een echte job', 'florentina',
-            'moordzaken', 'so you think you can dance', 'de mol'
+            'moordzaken', 'so you think you can dance', 'de mol',
+            'temptation island', 'blind getrouwd', 'gert late night'
         ]
         
         full_text_lower = details.get('full_text', '').lower()
@@ -129,6 +153,26 @@ class VTMScraper(BaseScraper):
         
         if detected_programs:
             details['detected_programs'] = detected_programs
+        
+        # 7. Probeer uitzendinfo te detecteren (datum/tijd patterns)
+        # Patterns zoals: "vrijdag 13 februari", "20u40", "20:40"
+        import re
+        
+        broadcast_patterns = [
+            r'\d{1,2}u\d{2}',  # 20u40
+            r'\d{1,2}:\d{2}',  # 20:40
+            r'(maandag|dinsdag|woensdag|donderdag|vrijdag|zaterdag|zondag)\s+\d{1,2}\s+(januari|februari|maart|april|mei|juni|juli|augustus|september|oktober|november|december)',
+            r'\d{1,2}\s+(januari|februari|maart|april|mei|juni|juli|augustus|september|oktober|november|december)'
+        ]
+        
+        broadcast_info = []
+        for pattern in broadcast_patterns:
+            matches = re.findall(pattern, full_text_lower, re.IGNORECASE)
+            broadcast_info.extend(matches)
+        
+        if broadcast_info:
+            details['has_broadcast_info'] = True
+            details['broadcast_hints'] = list(set([str(m) if isinstance(m, str) else m[0] for m in broadcast_info[:5]]))
         
         return details
     
@@ -141,6 +185,7 @@ class VTMScraper(BaseScraper):
             return []
         
         items = []
+        skipped_items = []
         
         # Probeer verschillende selectors
         selectors = [
@@ -190,6 +235,12 @@ class VTMScraper(BaseScraper):
             if not title or len(title) < 10:
                 continue
             
+            # 🔥 NIEUW: Check of artikel geskipt moet worden
+            if self.should_skip_article(title, url):
+                skipped_items.append(title)
+                print(f"[VTM] ⏭️  Skipping: {title[:50]}... (non-program content)")
+                continue
+            
             # Probeer datum te vinden
             date = None
             parent = link.find_parent(['article', 'div', 'li'])
@@ -223,43 +274,50 @@ class VTMScraper(BaseScraper):
                 extra_data=extra
             ))
         
-        print(f"[VTM] Found {len(items)} article links")
+        print(f"[VTM] Found {len(items)} relevant articles ({len(skipped_items)} skipped)")
         
-        # 🔥 NIEUW: Scrape ALLE artikelen volledig
-        print(f"\n[VTM] === Scraping full content for all {len(items)} articles ===")
-        
-        scraped_count = 0
-        failed_count = 0
-        
-        for i, item in enumerate(items, 1):
-            print(f"[VTM] [{i}/{len(items)}] Scraping: {item['title'][:50]}...")
+        # Scrape ALLE relevante artikelen volledig
+        if items:
+            print(f"\n[VTM] === Scraping full content for {len(items)} articles ===")
             
-            # Wacht tussen requests (respecteer de server)
-            if i > 1:
-                time.sleep(self.scrape_delay)
+            scraped_count = 0
+            failed_count = 0
             
-            try:
-                article_details = self.scrape_article_content(item['url'])
+            for i, item in enumerate(items, 1):
+                print(f"[VTM] [{i}/{len(items)}] Scraping: {item['title'][:50]}...")
                 
-                if article_details:
-                    item['content'] = article_details
-                    scraped_count += 1
+                # Wacht tussen requests
+                if i > 1:
+                    time.sleep(self.scrape_delay)
+                
+                try:
+                    article_details = self.scrape_article_content(item['url'])
                     
-                    # Short preview
-                    if 'summary' in article_details:
-                        print(f"[VTM]    ✅ {article_details['summary'][:60]}...")
+                    if article_details:
+                        item['content'] = article_details
+                        scraped_count += 1
+                        
+                        # Short preview met broadcast info
+                        if 'has_broadcast_info' in article_details:
+                            hints = ', '.join(article_details.get('broadcast_hints', [])[:2])
+                            print(f"[VTM]    ✅ Has broadcast info: {hints}")
+                        elif 'summary' in article_details:
+                            print(f"[VTM]    ✅ {article_details['summary'][:60]}...")
+                        else:
+                            print(f"[VTM]    ✅ Content scraped")
                     else:
-                        print(f"[VTM]    ✅ Content scraped")
-                else:
+                        failed_count += 1
+                        print(f"[VTM]    ⚠️  No content found")
+                        
+                except Exception as e:
                     failed_count += 1
-                    print(f"[VTM]    ⚠️  No content found")
-                    
-            except Exception as e:
-                failed_count += 1
-                print(f"[VTM]    ❌ Error: {e}")
-        
-        print(f"\n[VTM] === Scraping complete ===")
-        print(f"[VTM] ✅ Success: {scraped_count}/{len(items)} articles")
-        print(f"[VTM] ❌ Failed: {failed_count}/{len(items)} articles")
+                    print(f"[VTM]    ❌ Error: {e}")
+            
+            print(f"\n[VTM] === Scraping complete ===")
+            print(f"[VTM] ✅ Success: {scraped_count}/{len(items)} articles")
+            if failed_count > 0:
+                print(f"[VTM] ❌ Failed: {failed_count}/{len(items)} articles")
+            if skipped_items:
+                print(f"[VTM] ⏭️  Skipped: {len(skipped_items)} non-program articles")
         
         return items
