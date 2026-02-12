@@ -1,67 +1,72 @@
 #!/usr/bin/env python3
 """
-Media Press Feed Generator - Debug Version
-Scrapes multiple media press sites and combines into one JSON feed
+Media Press Feed Generator - Test Mode
+Scrapes articles and fully scrapes first article as test
 """
 
 import json
 import sys
 from datetime import datetime
 from scrapers import VTMScraper
-# Later: from scrapers import VRTScraper
 
-def inspect_html():
-    """Debug functie om VTM HTML structuur te inspecteren"""
-    import requests
-    from bs4 import BeautifulSoup
+def print_test_results(items):
+    """Print gedetailleerde test resultaten"""
+    if not items:
+        print("❌ No items scraped")
+        return
     
-    print("\n=== HTML INSPECTOR ===")
-    url = "https://communicatie.vtm.be"
+    print("\n" + "="*70)
+    print("📊 SCRAPING RESULTS")
+    print("="*70)
     
-    try:
-        response = requests.get(url, timeout=10)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Zoek alle links
-        all_links = soup.find_all('a', href=True)
-        print(f"Total links found: {len(all_links)}")
-        
-        # Analyseer welke classes gebruikt worden
-        classes_used = set()
-        for link in all_links:
-            if link.get('class'):
-                classes_used.update(link.get('class'))
-        
-        print(f"Link classes found: {', '.join(sorted(classes_used)[:10])}")
-        
-        # Print eerste 5 links met hun structure
-        print("\nFirst 5 links:")
-        for i, link in enumerate(all_links[:5]):
-            href = link.get('href', '')
-            text = link.get_text(strip=True)[:50]
-            classes = ' '.join(link.get('class', []))
-            print(f"{i+1}. [{classes}] {text}")
-            print(f"   URL: {href}")
-        
-        # Zoek naar artikel containers
-        containers = soup.find_all(['article', 'div'], class_=lambda x: x and any(
-            word in str(x).lower() for word in ['post', 'article', 'card', 'item']
-        ))
-        print(f"\nArticle containers found: {len(containers)}")
-        
-    except Exception as e:
-        print(f"Error inspecting HTML: {e}")
+    print(f"\nTotal articles found: {len(items)}")
     
-    print("=== END INSPECTOR ===\n")
+    # Check eerste item voor volledige content
+    first_item = items[0]
+    has_content = 'content' in first_item
+    
+    print(f"\n{'✅' if has_content else '❌'} First article has full content: {has_content}")
+    
+    if has_content:
+        content = first_item['content']
+        print(f"\n📄 FIRST ARTICLE DETAILS:")
+        print(f"   Title: {first_item['title'][:60]}...")
+        print(f"   URL: {first_item['url']}")
+        
+        if 'published_date' in content:
+            print(f"   Published: {content['published_date']}")
+        
+        if 'paragraphs' in content:
+            print(f"   Paragraphs: {len(content['paragraphs'])}")
+            print(f"   First paragraph: {content['paragraphs'][0][:100]}...")
+        
+        if 'image_url' in content:
+            print(f"   Image: {content['image_url'][:60]}...")
+        
+        if 'meta_description' in content:
+            print(f"   Meta desc: {content['meta_description'][:80]}...")
+        
+        if 'detected_programs' in content:
+            print(f"   Detected TV programs: {', '.join(content['detected_programs'])}")
+        
+        if 'tags' in content:
+            print(f"   Tags: {', '.join(content['tags'])}")
+        
+        print(f"\n   Available fields: {', '.join(content.keys())}")
+    
+    print(f"\n📋 OTHER ARTICLES (without full content):")
+    for i, item in enumerate(items[1:6], 2):  # Show next 5
+        print(f"   {i}. {item['title'][:60]}...")
+    
+    if len(items) > 6:
+        print(f"   ... and {len(items) - 6} more")
+    
+    print("\n" + "="*70)
 
 def main():
     """Main scraper orchestrator"""
-    print(f"=== Media Press Scraper Started at {datetime.now().isoformat()} ===\n")
-    
-    # Debug mode: inspect HTML first
-    import os
-    if os.environ.get('DEBUG') == '1':
-        inspect_html()
+    print(f"=== Media Press Scraper (TEST MODE) ===")
+    print(f"Started at {datetime.now().isoformat()}\n")
     
     all_items = []
     
@@ -74,32 +79,28 @@ def main():
         print(f"[ERROR] VTM scraper failed: {e}", file=sys.stderr)
         import traceback
         traceback.print_exc()
+        return 1
     
-    # VRT Scraper (later activeren)
-    # try:
-    #     vrt = VRTScraper()
-    #     vrt_items = vrt.scrape_articles()
-    #     all_items.extend(vrt_items)
-    # except Exception as e:
-    #     print(f"[ERROR] VRT scraper failed: {e}", file=sys.stderr)
-    
-    # Sorteer op scraped_at (nieuwste eerst)
+    # Sort by scraped_at
     all_items.sort(key=lambda x: x['scraped_at'], reverse=True)
     
-    # Schrijf naar feed.json
+    # Print test results
+    print_test_results(all_items)
+    
+    # Write to feed.json
     output_file = 'feed.json'
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(all_items, f, ensure_ascii=False, indent=2)
     
-    print(f"\n=== Scraping Complete ===")
-    print(f"Total items: {len(all_items)}")
+    print(f"\n💾 Output written to: {output_file}")
     
     if all_items:
-        print(f"Output: {output_file}")
-        print(f"Sources: {', '.join(set(item['source'] for item in all_items))}")
+        print(f"✅ Success! {len(all_items)} items scraped")
+        if 'content' in all_items[0]:
+            print(f"✅ First article has full content")
         return 0
     else:
-        print("ERROR: No items scraped!")
+        print("❌ ERROR: No items scraped!")
         return 1
 
 if __name__ == '__main__':
